@@ -27,66 +27,103 @@
  *   limitations under the License.                                           *
  *                                                                            *
 \* -------------------------------------------------------------------------- */
-use anyhow::anyhow;
-use std::process::Child;
 
-// Spawn is a child process of Auraed.
-//
-// Spawn:
-// Executes the command as a child process, returning a handle to it.
-// By default, stdin, stdout and stderr are inherited from the parent.
-#[derive(Debug)]
-pub struct Spawn {
-    pub process: Child,
+#![warn(clippy::unwrap_used)]
+
+use auraed::*;
+use clap::Parser;
+use tonic::transport::ServerTlsConfig;
+use tonic::{transport::Channel, Request};
+
+// use crate::testclient::{observe_client::ObserveClient, StdoutRequest};
+// use crate::observe_client::ObserveClient;
+
+mod meta;
+mod observe;
+mod runtime;
+
+use crate::observe::observe_client::ObserveClient;
+use crate::observe::StatusRequest;
+
+pub const OBSERVE_CLIENT_PORT: &str = "50051";
+pub const OBSERVE_CLIENT_ADDR: &str = "fe80::2%vm-br0";
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct DevClientOptions {
+    #[clap(short, long, value_parser, default_value = OBSERVE_CLIENT_ADDR)]
+    address: String,
+
+    #[clap(short, long, value_parser, default_value = OBSERVE_CLIENT_PORT)]
+    port: String,
+
+    #[clap(short, long)]
+    verbose: bool,
 }
 
-use std::process::Command;
+async fn get_log_stream(
+    client: &mut ObserveClient<Channel>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stream = client
+        .stdout(Request::new(observe::StdoutRequest {
+            channel: "dummy".to_string(),
+        }))
+        .await?
+        .into_inner();
+    println!("Request send!");
 
-pub fn exec(cmd: &str) -> Result<Spawn, anyhow::Error> {
-    let mut ents = cmd.split(' ');
-
-    // Build the base command ents[0]
-    let base = match ents.next() {
-        Some(base) => base,
-        None => {
-            return Err(anyhow!("empty argument command string"));
-        }
-    };
-
-    let mut command = Command::new(base);
-
-    for ent in ents {
-        if ent != base {
-            command.arg(ent);
-        }
+    while let Some(logitem) = stream.message().await? {
+        println!("{:?}", logitem);
     }
+    println!("Stream End!");
 
-    // Spawn
-    // Executes the command as a child process, returning a handle to it.
-    // By default, stdin, stdout and stderr are inherited from the parent.
-    let child = command.spawn()?;
-    let spawn = Spawn { process: child };
-    Ok(spawn)
+    Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+async fn get_status(
+    client: &mut ObserveClient<Channel>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let response = client
+        .status(Request::new(StatusRequest {
+            meta: vec![meta::AuraeMeta {
+                name: "UNKNOWN_NAME".to_string(),
+                code: 0,
+                message: "UNKNOWN_MESSAGE".to_string(),
+            }],
+        }))
+        .await?;
 
-    #[test]
-    fn test_commands_exec() {
-        // test_exec will test "concurrent" processes
-        // each of these spawn and return before exiting
-        let spawn1 = exec("touch /tmp/.aurae.testfile");
-        assert!(spawn1.is_ok());
+    println!("Response: {:?}", response);
 
-        let spawn2 = exec("cat /tmp/.aurae.testfile");
-        assert!(spawn2.is_ok());
+    Ok(())
+}
 
-        let spawn3 = exec("this-is-a-known-bad-command-executable");
-        assert!(spawn3.is_err());
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let options = DevClientOptions::parse();
 
-        let spawn4 = exec(""); // empty arguments should fail
-        assert!(spawn4.is_err());
+    let port = options.port;
+    let address = options.address;
+
+    println!("Connecting Client...");
+    println!("\t address: {}", address);
+    println!("\t port: {}", port);
+
+    let mut client =
+        ObserveClient::connect(format!("http://[{}]:{}", address, port))
+            .await?;
+    println!("Connection established!");
+
+    println!("Get Log Stream");
+    if let Err(e) = get_log_stream(&mut client).await {
+        println!("Error in log stream: {:?}", e);
     }
+
+    println!("Get Status");
+    if let Err(e) = get_status(&mut client).await {
+        println!("Error in status api: {:?}", e);
+    }
+
+    println!("Bye!");
+    Ok(())
 }

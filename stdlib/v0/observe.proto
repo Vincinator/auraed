@@ -37,6 +37,7 @@ import "meta.proto";
 service Observe {
 
   rpc Status(StatusRequest) returns (StatusResponse) {}
+  rpc Stdout(StdoutRequest) returns (stream LogItem) {}
 
 }
 
@@ -46,4 +47,13 @@ message StatusRequest {
 
 message StatusResponse {
   repeated meta.AuraeMeta meta = 1;
+}
+
+message StdoutRequest {
+  string channel = 1;
+}
+
+message LogItem {
+  string line = 1;
+  uint64 timestamp = 2;
 }

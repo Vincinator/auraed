@@ -38,6 +38,10 @@ authors = ["The Aurae Authors", "Kris Nóva <kris@nivenly.com>"]
 name = "auraed"
 path = "src/bin/main.rs"
 
+[[bin]]
+name = "testclient"
+path = "hack/dev-client/src/main.rs"
+
 [dependencies]
 clap = { version = "3.1.20", features = ["derive"] }
 log = "0.4.17"
@@ -59,7 +63,8 @@ ipnetwork = "0.20.0"
 rtnetlink = "0.11.0"
 netlink-packet-route = "0.13.0" # Used for netlink_packet_route::rtnl::address::nlas definition
 thiserror = "1.0.37"
+crossbeam = "0.8"
 
 [build-dependencies]
 anyhow = "1.0.65"
-tonic-build = "0.8"
+tonic-build = { version = "0.8",  features = ["prost"] }

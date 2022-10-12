@@ -31,6 +31,7 @@
 #![warn(clippy::unwrap_used)]
 
 use anyhow::Context;
+use crossbeam::channel::unbounded;
 use log::*;
 use sea_orm::ConnectOptions;
 use sea_orm::ConnectionTrait;
@@ -38,14 +39,18 @@ use sea_orm::Database;
 use sea_orm::Statement;
 use std::borrow::Cow;
 use std::fs;
+use std::net::SocketAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 use tokio::net::UnixListener;
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 
 use crate::observe::observe_server::ObserveServer;
+use crate::observe::LogCollector;
 use crate::observe::ObserveService;
 use crate::runtime::runtime_server::RuntimeServer;
 use crate::runtime::RuntimeService;
@@ -107,14 +112,32 @@ impl AuraedRuntime {
         let sock = UnixListener::bind(&self.socket)?;
         let sock_stream = UnixListenerStream::new(sock);
 
+        let log_collector = LogCollector::new();
+        // Log Collector used to expose logs via API
+        let prod = log_collector.get_producer();
+        thread::spawn(move || loop {
+            LogCollector::log_line(prod.clone(), "yolo");
+            thread::sleep(Duration::from_secs(1));
+        });
         // Run the server concurrently
         let handle = tokio::spawn(async {
-            Server::builder()
-                .tls_config(tls)?
+            let addr: SocketAddr = "[::]:50051".parse().unwrap();
+
+            let res = Server::builder()
+                // TODO: tls setup for dev-client
+                //.tls_config(tls).unwrap()
                 .add_service(RuntimeServer::new(RuntimeService::default()))
-                .add_service(ObserveServer::new(ObserveService::default()))
-                .serve_with_incoming(sock_stream)
-                .await
+                .add_service(ObserveServer::new(ObserveService::new(
+                    log_collector,
+                )))
+                .serve(addr)
+                .await;
+            match res {
+                Ok(_) => {}
+                Err(e) => {
+                    println!("{}", e)
+                }
+            }
         });
 
         trace!("Setting socket mode {} -> 766", &self.socket.display());
@@ -150,7 +173,7 @@ impl AuraedRuntime {
         //runtime::hydrate(&db).await?;
 
         // Event loop
-        handle.await??;
+        handle.await?;
         info!("gRPC server exited successfully");
 
         Ok(())
