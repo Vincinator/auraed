@@ -65,8 +65,7 @@ async fn get_log_stream(
     client: &mut ObserveClient<Channel>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut stream = client
-        .stdout(Request::new(observe::StdoutRequest {
-            channel: "dummy".to_string(),
+        .get_aurae_daemon_log_stream(Request::new(observe::GetAuraeDaemonLogStreamRequest {
         }))
         .await?
         .into_inner();

@@ -31,7 +31,7 @@
 use std::{os::unix, time::SystemTime};
 
 pub mod logchannel;
-pub mod logger;
+pub mod streamlogger;
 
 pub fn get_timestamp_sec() -> u64 {
     let unix_ts = SystemTime::now()

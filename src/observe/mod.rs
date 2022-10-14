@@ -35,6 +35,7 @@ use std::time::SystemTime;
 
 use crossbeam::channel::bounded;
 use futures::executor::block_on;
+use log::Log;
 use log::error;
 use log::info;
 use log::trace;
@@ -50,12 +51,21 @@ use tonic::{Request, Response, Status};
 
 #[derive(Debug)]
 pub struct ObserveService {
-    consumer: Receiver<LogItem>,
+    consumer_aurae_logger: Receiver<LogItem>,
+    sub_process_consumer_list: Vec<Receiver<LogItem>>,
 }
 
 impl ObserveService {
-    pub fn new(consumer: Receiver<LogItem>) -> ObserveService {
-        ObserveService { consumer }
+    pub fn new(consumer_aurae_logger: Receiver<LogItem>) -> ObserveService {
+        ObserveService {
+            consumer_aurae_logger,
+            sub_process_consumer_list: Vec::<Receiver<LogItem>>::new(),
+        }
+    }
+
+    pub fn register_channel(&mut self, consumer: Receiver<LogItem>){
+        info!("Added new channel");
+        self.sub_process_consumer_list.push(consumer);
     }
 }
 
@@ -74,14 +84,16 @@ impl Observe for ObserveService {
         Ok(Response::new(response))
     }
 
-    type StdoutStream = ReceiverStream<Result<LogItem, Status>>;
+    type GetAuraeDaemonLogStreamStream = ReceiverStream<Result<LogItem, Status>>;
 
-    async fn stdout(
+    async fn get_aurae_daemon_log_stream(
         &self,
-        _request: Request<StdoutRequest>,
-    ) -> Result<Response<Self::StdoutStream>, Status> {
+        _request: Request<GetAuraeDaemonLogStreamRequest>,
+    ) -> Result<Response<Self::GetAuraeDaemonLogStreamStream>, Status> {
         let (tx, rx) = mpsc::channel::<Result<LogItem, Status>>(4);
-        let log_consumer = self.consumer.clone();
+
+        let log_consumer = self.consumer_aurae_logger.clone();
+
         thread::spawn(move || {
             for i in log_consumer.into_iter() {
                 match block_on(tx.send(Ok(i))) {
@@ -92,4 +104,25 @@ impl Observe for ObserveService {
         });
         Ok(Response::new(ReceiverStream::new(rx)))
     }
+
+    type GetSubProcessStreamStream = ReceiverStream<Result<LogItem, Status>>;
+
+
+    async fn get_sub_process_stream(
+        &self,
+        request: Request<GetSubProcessStreamRequest>,
+    ) -> Result<Response<Self::GetSubProcessStreamStream>, Status> {
+
+        
+        let requested_channel = request.get_ref().channel_type;
+        let requested_pid = request.get_ref().process_id;
+
+        println!("Requested Channel {}", requested_channel);
+        println!("Requested Process ID {}", requested_pid);
+
+        let (tx, rx) = mpsc::channel::<Result<LogItem, Status>>(4);
+
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
 }

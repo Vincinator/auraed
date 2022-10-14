@@ -3,7 +3,7 @@ use log::{Level, SetLoggerError};
 use simplelog::SimpleLogger;
 use syslog::{BasicLogger, Facility, Formatter3164};
 
-use crate::{logging::logger::StreamLogger, observe::LogItem};
+use crate::{logging::streamlogger::StreamLogger, observe::LogItem};
 
 const AURAED_SYSLOG_NAME: &str = "auraed";
 

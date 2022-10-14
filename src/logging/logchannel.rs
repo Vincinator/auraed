@@ -30,9 +30,11 @@
 
 use std::time::SystemTime;
 
-use crossbeam::channel::{Sender, Receiver, bounded};
-use log::{trace, error};
 use crate::observe::LogItem;
+use crossbeam::channel::{bounded, Receiver, Sender};
+use log::{error, trace};
+
+use super::get_timestamp_sec;
 
 #[derive(Debug)]
 pub struct LogChannel {
@@ -55,21 +57,14 @@ impl LogChannel {
         self.consumer.clone()
     }
 
-
     pub fn log_line(producer: Sender<LogItem>, line: &str) {
-        let unix_ts = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("System Clock went backwards");
-
         match producer.send(LogItem {
             channel: "unknown".to_string(),
             line: line.to_string(),
             // TODO: milliseconds type in protobuf requires 128bit type
-            timestamp: unix_ts.as_secs(),
+            timestamp: get_timestamp_sec(),
         }) {
-            Ok(_) => {
-                trace!("Success: Send item via producer channel to ringbuffer");
-            }
+            Ok(_) => {}
             Err(e) => {
                 error!("Error! {:?}", e);
             }
