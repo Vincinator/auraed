@@ -28,68 +28,106 @@
  *                                                                            *
 \* -------------------------------------------------------------------------- */
 
-tonic::include_proto!("observe");
-
-use std::thread;
 use std::time::SystemTime;
 
-use crossbeam::channel::bounded;
-use futures::executor::block_on;
-use log::error;
-use log::info;
-use log::trace;
-
-use crossbeam::channel::{unbounded, Receiver, Sender};
-
-use crate::codes::*;
-use crate::meta;
-use crate::observe::observe_server::Observe;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Request, Response, Status};
+use crossbeam::channel::{Sender, Receiver, bounded};
+use log::{trace, error};
+use crate::observe::LogItem;
 
 #[derive(Debug)]
-pub struct ObserveService {
-    consumer: Receiver<LogItem>,
+pub struct LogChannel {
+    pub producer: Sender<LogItem>,
+    pub consumer: Receiver<LogItem>,
+    pub name: String,
 }
 
-impl ObserveService {
-    pub fn new(consumer: Receiver<LogItem>) -> ObserveService {
-        ObserveService { consumer }
-    }
-}
-
-#[tonic::async_trait]
-impl Observe for ObserveService {
-    async fn status(
-        &self,
-        _request: Request<StatusRequest>,
-    ) -> Result<Response<StatusResponse>, Status> {
-        let meta = vec![meta::AuraeMeta {
-            name: "UNKNOWN_NAME".to_string(),
-            code: CODE_SUCCESS,
-            message: "UNKNOWN_MESSAGE".to_string(),
-        }];
-        let response = StatusResponse { meta };
-        Ok(Response::new(response))
+impl LogChannel {
+    pub fn new(name: &str) -> LogChannel {
+        let (producer, consumer) = bounded(40);
+        LogChannel { producer, consumer, name: name.to_string() }
     }
 
-    type StdoutStream = ReceiverStream<Result<LogItem, Status>>;
+    pub fn get_producer(&self) -> Sender<LogItem> {
+        self.producer.clone()
+    }
 
-    async fn stdout(
-        &self,
-        _request: Request<StdoutRequest>,
-    ) -> Result<Response<Self::StdoutStream>, Status> {
-        let (tx, rx) = mpsc::channel::<Result<LogItem, Status>>(4);
-        let log_consumer = self.consumer.clone();
-        thread::spawn(move || {
-            for i in log_consumer.into_iter() {
-                match block_on(tx.send(Ok(i))) {
-                    Ok(_) => {}
-                    Err(_) => {}
-                }
+    pub fn get_consumer(&self) -> Receiver<LogItem> {
+        self.consumer.clone()
+    }
+
+
+    pub fn log_line(producer: Sender<LogItem>, line: &str) {
+        let unix_ts = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("System Clock went backwards");
+
+        match producer.send(LogItem {
+            channel: "unknown".to_string(),
+            line: line.to_string(),
+            // TODO: milliseconds type in protobuf requires 128bit type
+            timestamp: unix_ts.as_secs(),
+        }) {
+            Ok(_) => {
+                trace!("Success: Send item via producer channel to ringbuffer");
             }
-        });
-        Ok(Response::new(ReceiverStream::new(rx)))
+            Err(e) => {
+                error!("Error! {:?}", e);
+            }
+        }
+    }
+
+    fn consume_line(consumer: Receiver<LogItem>) -> Option<LogItem> {
+        match consumer.recv() {
+            Ok(val) => {
+                return Some(val);
+            }
+            Err(e) => {
+                error!("Error: {:?}", e);
+                return None;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use log::Level;
+    use simplelog::SimpleLogger;
+
+    use super::*;
+
+    fn init_logging() {
+        let logger_simple = SimpleLogger::new(
+            Level::Trace.to_level_filter(),
+            simplelog::Config::default(),
+        );
+
+        multi_log::MultiLogger::init(vec![logger_simple], Level::Trace)
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_ringbuffer_queue() {
+        init_logging();
+        let lrb = LogChannel::new("Test");
+        let prod = lrb.get_producer();
+
+        LogChannel::log_line(prod.clone(), "hello");
+        LogChannel::log_line(prod.clone(), "aurae");
+        LogChannel::log_line(prod.clone(), "bye");
+
+        let consumer = lrb.get_consumer();
+
+        let cur_item = LogChannel::consume_line(consumer.clone());
+        assert!(cur_item.is_some());
+        assert_eq!(cur_item.unwrap().line, "hello");
+
+        let cur_item = LogChannel::consume_line(consumer.clone());
+        assert!(cur_item.is_some());
+        assert_eq!(cur_item.unwrap().line, "aurae");
+
+        let cur_item = LogChannel::consume_line(consumer.clone());
+        assert!(cur_item.is_some());
+        assert_eq!(cur_item.unwrap().line, "bye");
     }
 }

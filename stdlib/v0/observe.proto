@@ -54,6 +54,7 @@ message StdoutRequest {
 }
 
 message LogItem {
-  string line = 1;
-  uint64 timestamp = 2;
+  string channel = 1;
+  string line = 2;
+  uint64 timestamp = 3;
 }

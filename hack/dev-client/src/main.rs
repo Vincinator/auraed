@@ -73,7 +73,7 @@ async fn get_log_stream(
     println!("Request send!");
 
     while let Some(logitem) = stream.message().await? {
-        println!("{:?}", logitem);
+        println!("{}: {}", logitem.timestamp, logitem.line);
     }
     println!("Stream End!");
 

@@ -33,6 +33,7 @@
 use anyhow::Context;
 use crossbeam::channel::unbounded;
 use log::*;
+use logging::logchannel::LogChannel;
 use sea_orm::ConnectOptions;
 use sea_orm::ConnectionTrait;
 use sea_orm::Database;
@@ -50,13 +51,13 @@ use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 
 use crate::observe::observe_server::ObserveServer;
-use crate::observe::LogCollector;
 use crate::observe::ObserveService;
 use crate::runtime::runtime_server::RuntimeServer;
 use crate::runtime::RuntimeService;
 
 mod codes;
 pub mod init;
+pub mod logging;
 mod meta;
 mod observe;
 mod runtime;
@@ -71,6 +72,8 @@ pub struct AuraedRuntime {
     pub server_crt: PathBuf,
     pub server_key: PathBuf,
     pub socket: PathBuf,
+
+    pub log_collector: LogChannel,
 }
 
 impl AuraedRuntime {
@@ -112,11 +115,11 @@ impl AuraedRuntime {
         let sock = UnixListener::bind(&self.socket)?;
         let sock_stream = UnixListenerStream::new(sock);
 
-        let log_collector = LogCollector::new();
-        // Log Collector used to expose logs via API
-        let prod = log_collector.get_producer();
+        let prod = self.log_collector.get_producer();
+        let consumer = self.log_collector.get_consumer();
+
         thread::spawn(move || loop {
-            LogCollector::log_line(prod.clone(), "yolo");
+            LogChannel::log_line(prod.clone(), "yolo");
             thread::sleep(Duration::from_secs(1));
         });
         // Run the server concurrently
@@ -127,9 +130,7 @@ impl AuraedRuntime {
                 // TODO: tls setup for dev-client
                 //.tls_config(tls).unwrap()
                 .add_service(RuntimeServer::new(RuntimeService::default()))
-                .add_service(ObserveServer::new(ObserveService::new(
-                    log_collector,
-                )))
+                .add_service(ObserveServer::new(ObserveService::new(consumer)))
                 .serve(addr)
                 .await;
             match res {

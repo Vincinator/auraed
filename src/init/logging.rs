@@ -1,6 +1,9 @@
+use crossbeam::channel::Sender;
 use log::{Level, SetLoggerError};
 use simplelog::SimpleLogger;
 use syslog::{BasicLogger, Facility, Formatter3164};
+
+use crate::{logging::logger::StreamLogger, observe::LogItem};
 
 const AURAED_SYSLOG_NAME: &str = "auraed";
 
@@ -12,9 +15,12 @@ pub(crate) enum LoggingError {
     SysLogSetupFailure(SetLoggerError),
 }
 
-pub(crate) fn init(logger_level: Level) -> Result<(), LoggingError> {
+pub(crate) fn init(
+    logger_level: Level,
+    producer: Sender<LogItem>,
+) -> Result<(), LoggingError> {
     match std::process::id() {
-        1 => init_pid1_logging(logger_level),
+        1 => init_pid1_logging(logger_level, producer),
         _ => init_syslog_logging(logger_level),
     }
 }
@@ -52,12 +58,20 @@ fn init_syslog_logging(logger_level: Level) -> Result<(), LoggingError> {
 //      other than fullfill the requirement of syslog crate.
 //      For now, auraed distinguishes between pid1 system and local (dev environment) logging.
 //      [1] https://docs.rs/syslog/latest/src/syslog/lib.rs.html#232-243
-fn init_pid1_logging(logger_level: Level) -> Result<(), LoggingError> {
+fn init_pid1_logging(
+    logger_level: Level,
+    producer: Sender<LogItem>,
+) -> Result<(), LoggingError> {
     // Initialize the logger
     let logger_simple = create_logger_simple(logger_level);
 
-    multi_log::MultiLogger::init(vec![logger_simple], logger_level)
-        .map_err(LoggingError::SysLogConnectionFailure)
+    let logger_stream = Box::new(StreamLogger::new(producer));
+
+    multi_log::MultiLogger::init(
+        vec![logger_simple, logger_stream],
+        logger_level,
+    )
+    .map_err(LoggingError::SysLogConnectionFailure)
 }
 
 fn create_logger_simple(logger_level: Level) -> Box<SimpleLogger> {
